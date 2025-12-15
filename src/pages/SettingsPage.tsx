@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -28,16 +28,21 @@ export function SettingsPage() {
   });
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsSchema),
-    values: {
-      cloudflareAccountId: settings?.cloudflareAccountId || '',
-      cloudflareApiToken: settings?.cloudflareApiToken || '',
-      splitTunnelPolicyId: settings?.splitTunnelPolicyId || '',
-    },
-    disabled: isLoading,
-    resetOptions: {
-      keepDirtyValues: true,
+    defaultValues: {
+      cloudflareAccountId: '',
+      cloudflareApiToken: '',
+      splitTunnelPolicyId: '',
     },
   });
+  useEffect(() => {
+    if (settings) {
+      form.reset({
+        cloudflareAccountId: settings.cloudflareAccountId ?? '',
+        cloudflareApiToken: settings.cloudflareApiToken ?? '',
+        splitTunnelPolicyId: settings.splitTunnelPolicyId ?? '',
+      });
+    }
+  }, [settings, form]);
   const mutation = useMutation({
     mutationFn: saveSettings,
     onSuccess: () => {

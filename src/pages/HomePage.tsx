@@ -19,7 +19,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recha
 const StatusBadge = ({ status }: { status: SyncLog['status'] }) => {
   const variants = {
     success: { variant: 'default', className: 'bg-green-500/10 text-green-500 border-green-500/20', label: 'Success' },
-    failure: { variant: 'destructive', label: 'Failed' },
+    failure: { variant: 'destructive', className: 'bg-red-500/10 text-red-500 border-red-500/20', label: 'Failed' },
     preview: { variant: 'secondary', className: 'bg-blue-500/10 text-blue-400 border-blue-500/20', label: 'Preview' },
   } as const;
   const { variant, className, label } = variants[status];
