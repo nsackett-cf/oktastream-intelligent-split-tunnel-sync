@@ -1,135 +1,168 @@
-import React from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { fetchOktaIpRanges, simulateSync } from '@/lib/api';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { fetchOktaIpRanges, getSettings, getSyncHistory, sync } from '@/lib/api';
 import { StatCard } from '@/components/ui/stat-card';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Clock, Globe, CheckCircle, AlertTriangle, Zap, Info } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Clock, Globe, CheckCircle, AlertTriangle, Zap, Info, Settings, History, ArrowRight, Plus, Minus } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
+import type { SyncLog, SyncPreview } from '@shared/types';
+const StatusBadge = ({ status }: { status: SyncLog['status'] }) => {
+  const variants = {
+    success: { variant: 'default', className: 'bg-green-500/10 text-green-500 border-green-500/20', label: 'Success' },
+    failure: { variant: 'destructive', label: 'Failed' },
+    preview: { variant: 'secondary', className: 'bg-blue-500/10 text-blue-400 border-blue-500/20', label: 'Preview' },
+  } as const;
+  const { variant, className, label } = variants[status];
+  return <Badge variant={variant} className={cn('capitalize', className)}>{label}</Badge>;
+};
+import { cn } from '@/lib/utils';
 export function HomePage() {
-  const { data, isLoading, error } = useQuery({
+  const queryClient = useQueryClient();
+  const [preview, setPreview] = useState<SyncPreview | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const { data: oktaData, isLoading: isOktaLoading, error: oktaError } = useQuery({
     queryKey: ['oktaIpRanges'],
     queryFn: fetchOktaIpRanges,
   });
+  const { data: settings, isLoading: isSettingsLoading } = useQuery({
+    queryKey: ['settings'],
+    queryFn: getSettings,
+  });
+  const isConfigured = !!(settings?.data?.cloudflareAccountId && settings.data.cloudflareApiToken && settings.data.splitTunnelPolicyId);
+  const { data: history = [], isLoading: isHistoryLoading } = useQuery({
+    queryKey: ['history'],
+    queryFn: getSyncHistory,
+    select: (res) => res.data ?? [],
+  });
   const syncMutation = useMutation({
-    mutationFn: simulateSync,
+    mutationFn: (dryRun: boolean) => sync(dryRun),
     onSuccess: (res) => {
-      if (res.success && res.data) {
-        toast.success('Simulation Complete', {
-          description: `Added ${res.data.added} and removed ${res.data.removed} IP ranges.`,
-        });
+      queryClient.invalidateQueries({ queryKey: ['history'] });
+      if (res.success) {
+        const data = res.data;
+        if (data && 'preview' in data) {
+          setPreview(data);
+          setIsModalOpen(true);
+        } else if (data) {
+          toast.success('Live Sync Successful', { description: `Policy updated with ${data.added} added and ${data.removed} removed ranges.` });
+        }
       } else {
-        toast.error('Simulation Failed', { description: res.error });
+        toast.error('Operation Failed', { description: res.error });
       }
     },
     onError: (err) => {
-      toast.error('Simulation Failed', { description: err.message });
+      toast.error('Operation Failed', { description: err.message });
     },
+    onSettled: () => {
+      setIsModalOpen(false);
+    }
   });
-  const ipCount = data?.data?.ip_ranges?.length ?? 0;
-  const lastUpdated = data?.data?.last_updated;
+  const ipCount = oktaData?.data?.ip_ranges?.length ?? 0;
+  const lastOktaUpdate = oktaData?.data?.last_updated;
+  const lastSync = history[0];
+  const isLoading = isOktaLoading || isSettingsLoading;
   return (
     <div className="space-y-8 animate-fade-in">
       <header className="space-y-2">
         <h1 className="text-4xl font-bold tracking-tight">Mission Control</h1>
-        <p className="text-lg text-muted-foreground">
-          Oversee and manage the synchronization of Okta IP ranges to Cloudflare Zero Trust.
-        </p>
+        <p className="text-lg text-muted-foreground">Oversee and manage the synchronization of Okta IP ranges to Cloudflare Zero Trust.</p>
       </header>
+      {!isSettingsLoading && !isConfigured && (
+        <Alert variant="destructive" className="bg-yellow-500/5 border-yellow-500/20 text-yellow-200">
+          <Settings className="h-4 w-4 !text-yellow-400" />
+          <AlertTitle className="text-yellow-300">Setup Required</AlertTitle>
+          <AlertDescription>
+            Your Cloudflare API credentials are not configured. Please go to the configuration page to complete the setup.
+            <Button asChild variant="link" className="p-0 h-auto ml-2 text-yellow-300 hover:text-yellow-100">
+              <Link to="/settings">Go to Configuration <ArrowRight className="ml-1 h-4 w-4" /></Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {isLoading ? (
-          <>
-            <Skeleton className="h-32" />
-            <Skeleton className="h-32" />
-            <Skeleton className="h-32" />
-          </>
-        ) : error ? (
-          <div className="md:col-span-2 lg:col-span-3">
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Failed to Fetch Okta Data</AlertTitle>
-              <AlertDescription>
-                Could not retrieve IP range information from Okta. The dashboard may not function correctly.
-              </AlertDescription>
-            </Alert>
-          </div>
-        ) : (
-          <>
-            <StatCard
-              title="Sync Status"
-              value="Ready"
-              icon={<CheckCircle className="h-5 w-5 text-green-500" />}
-              description="System is operational and ready to sync."
-            />
-            <StatCard
-              title="Total Okta IP Ranges"
-              value={ipCount}
-              icon={<Globe className="h-5 w-5" />}
-              description="Live count from Okta's public list."
-            />
-            <StatCard
-              title="Last Okta Update"
-              value={lastUpdated ? formatDistanceToNow(new Date(lastUpdated), { addSuffix: true }) : 'N/A'}
-              icon={<Clock className="h-5 w-5" />}
-              description="How recently Okta published changes."
-            />
-          </>
-        )}
+        {isLoading ? Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32" />)
+          : oktaError ? (
+            <div className="md:col-span-2 lg:col-span-3">
+              <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertTitle>Failed to Fetch Okta Data</AlertTitle><AlertDescription>Could not retrieve IP range information from Okta.</AlertDescription></Alert>
+            </div>
+          ) : (
+            <>
+              <StatCard title="Sync Status" value={lastSync?.status === 'success' ? 'Synced' : 'Ready'} icon={lastSync?.status === 'success' ? <CheckCircle className="h-5 w-5 text-green-500" /> : <Info className="h-5 w-5 text-blue-500" />} description={lastSync ? `Last sync: ${formatDistanceToNow(new Date(lastSync.timestamp), { addSuffix: true })}` : 'Ready for first sync'} />
+              <StatCard title="Total Okta IP Ranges" value={ipCount} icon={<Globe className="h-5 w-5" />} description="Live count from Okta's public list." />
+              <StatCard title="Last Okta Update" value={lastOktaUpdate ? formatDistanceToNow(new Date(lastOktaUpdate), { addSuffix: true }) : 'N/A'} icon={<Clock className="h-5 w-5" />} description="How recently Okta published changes." />
+            </>
+          )}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
         <div className="lg:col-span-3">
           <Card>
-            <CardHeader>
-              <CardTitle>Synchronization Control</CardTitle>
-              <CardDescription>
-                Initiate a dry-run or a live sync to update your Cloudflare policy.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Alert>
-                <Info className="h-4 w-4" />
-                <AlertTitle>Phase 1: Simulation Mode</AlertTitle>
-                <AlertDescription>
-                  The "Sync Now" button currently performs a simulated dry-run. No actual changes will be made to your Cloudflare account in this phase.
-                </AlertDescription>
-              </Alert>
-              <div className="flex flex-col sm:flex-row gap-4">
-                <Button 
-                  size="lg" 
-                  className="w-full sm:w-auto"
-                  onClick={() => syncMutation.mutate()}
-                  disabled={syncMutation.isPending || isLoading || !!error}
-                >
-                  <Zap className="mr-2 h-4 w-4" />
-                  {syncMutation.isPending ? 'Simulating...' : 'Run Sync Simulation'}
-                </Button>
-              </div>
+            <CardHeader><CardTitle>Synchronization Control</CardTitle><CardDescription>Initiate a dry-run to preview changes or a live sync to update your Cloudflare policy.</CardDescription></CardHeader>
+            <CardContent>
+              <Button size="lg" onClick={() => syncMutation.mutate(true)} disabled={syncMutation.isPending || isLoading || !!oktaError || !isConfigured}>
+                <Zap className="mr-2 h-4 w-4" />
+                {syncMutation.isPending && syncMutation.variables ? 'Scanning...' : 'Scan & Dry Run'}
+              </Button>
             </CardContent>
           </Card>
         </div>
         <div className="lg:col-span-2">
-           <Card className="h-full">
-            <CardHeader>
-              <CardTitle>Recent Activity</CardTitle>
-              <CardDescription>Logs of recent sync operations.</CardDescription>
-            </CardHeader>
+          <Card className="h-full">
+            <CardHeader><CardTitle>Recent Activity</CardTitle><CardDescription>A log of the latest sync operations.</CardDescription></CardHeader>
             <CardContent>
-              <div className="text-center text-muted-foreground py-8">
-                <p>No sync history yet.</p>
-                <p className="text-sm">Run a simulation to see activity here.</p>
-              </div>
+              {isHistoryLoading ? <div className="space-y-2"><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /></div>
+                : history.length === 0 ? (
+                  <div className="text-center text-muted-foreground py-8 flex flex-col items-center justify-center h-full"><History className="h-8 w-8 mb-2" /><p>No sync history yet.</p><p className="text-sm">Run a scan to see activity here.</p></div>
+                ) : (
+                  <div className="space-y-3">
+                    {history.slice(0, 4).map(log => (
+                      <div key={log.id} className="flex items-center justify-between text-sm p-3 rounded-md border bg-card-foreground/5">
+                        <div className="flex items-center gap-3"><StatusBadge status={log.status} /><span className="text-muted-foreground">{formatDistanceToNow(new Date(log.timestamp), { addSuffix: true })}</span></div>
+                        <div className="flex items-center gap-3 font-mono text-xs">
+                          <span className="flex items-center text-green-400"><Plus className="h-3 w-3 mr-1" />{log.added}</span>
+                          <span className="flex items-center text-red-400"><Minus className="h-3 w-3 mr-1" />{log.removed}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
             </CardContent>
           </Card>
         </div>
       </div>
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Dry Run Preview</DialogTitle>
+            <DialogDescription>Review the changes that will be applied to your Split Tunnel policy. No changes have been made yet.</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4 my-4">
+            <div className="p-4 rounded-lg bg-green-500/10 text-center">
+              <p className="text-sm text-green-400/80">IPs to be Added</p>
+              <p className="text-3xl font-bold text-green-400">{preview?.addedCount ?? 0}</p>
+            </div>
+            <div className="p-4 rounded-lg bg-red-500/10 text-center">
+              <p className="text-sm text-red-400/80">IPs to be Removed</p>
+              <p className="text-3xl font-bold text-red-400">{preview?.removedCount ?? 0}</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+            <Button onClick={() => syncMutation.mutate(false)} disabled={syncMutation.isPending}>
+              {syncMutation.isPending && !syncMutation.variables ? 'Applying...' : 'Apply Live Sync'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <footer className="text-center text-sm text-muted-foreground/80 pt-8">
         <p>Built with ❤️ at Cloudflare</p>
       </footer>
-      <Toaster richColors closeButton />
     </div>
   );
 }

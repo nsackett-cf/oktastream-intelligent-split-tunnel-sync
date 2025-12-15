@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { DemoItem } from '@shared/types';
-import { MOCK_ITEMS } from '@shared/mock-data';
+import type { AppConfig, SyncLog } from '@shared/types';
 // **DO NOT MODIFY THE CLASS NAME**
 export class GlobalDurableObject extends DurableObject {
     // Generic storage handler for simple key-value operations
@@ -39,48 +38,21 @@ export class GlobalDurableObject extends DurableObject {
         // Fallback for original fetch behavior if needed, or handle other paths
         return new Response('Not Found', { status: 404 });
     }
-    async getCounterValue(): Promise<number> {
-      const value = (await this.ctx.storage.get("counter_value")) || 0;
-      return value as number;
+    async getAppConfig(): Promise<AppConfig | null> {
+        const cfg = await this.ctx.storage.get<AppConfig>('app_config');
+        return cfg ?? null;
     }
-    async increment(amount = 1): Promise<number> {
-      let value: number = (await this.ctx.storage.get("counter_value")) || 0;
-      value += amount;
-      await this.ctx.storage.put("counter_value", value);
-      return value;
+    async saveAppConfig(cfg: AppConfig): Promise<void> {
+        await this.ctx.storage.put('app_config', cfg);
     }
-    async decrement(amount = 1): Promise<number> {
-      let value: number = (await this.ctx.storage.get("counter_value")) || 0;
-      value -= amount;
-      await this.ctx.storage.put("counter_value", value);
-      return value;
+    async getSyncHistory(): Promise<SyncLog[]> {
+        const logs = await this.ctx.storage.get<SyncLog[]>('sync_history');
+        return (logs || []).slice(0, 20); // Return last 20, or empty array
     }
-    async getDemoItems(): Promise<DemoItem[]> {
-      const items = await this.ctx.storage.get("demo_items");
-      if (items) {
-        return items as DemoItem[];
-      }
-      await this.ctx.storage.put("demo_items", MOCK_ITEMS);
-      return MOCK_ITEMS;
-    }
-    async addDemoItem(item: DemoItem): Promise<DemoItem[]> {
-      const items = await this.getDemoItems();
-      const updatedItems = [...items, item];
-      await this.ctx.storage.put("demo_items", updatedItems);
-      return updatedItems;
-    }
-    async updateDemoItem(id: string, updates: Partial<Omit<DemoItem, 'id'>>): Promise<DemoItem[]> {
-      const items = await this.getDemoItems();
-      const updatedItems = items.map(item =>
-        item.id === id ? { ...item, ...updates } : item
-      );
-      await this.ctx.storage.put("demo_items", updatedItems);
-      return updatedItems;
-    }
-    async deleteDemoItem(id: string): Promise<DemoItem[]> {
-      const items = await this.getDemoItems();
-      const updatedItems = items.filter(item => item.id !== id);
-      await this.ctx.storage.put("demo_items", updatedItems);
-      return updatedItems;
+    async addSyncLog(log: SyncLog): Promise<SyncLog[]> {
+        const logs = await this.getSyncHistory();
+        const updated = [log, ...logs].slice(0, 20);
+        await this.ctx.storage.put('sync_history', updated);
+        return updated;
     }
 }

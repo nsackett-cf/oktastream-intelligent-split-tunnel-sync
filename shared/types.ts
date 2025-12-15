@@ -21,8 +21,32 @@ export interface AppConfig {
 export interface SyncLog {
   id: string;
   timestamp: string;
-  status: 'success' | 'failure' | 'simulated';
+  status: 'success' | 'failure' | 'preview';
   added: number;
   removed: number;
   details?: string;
+}
+export interface CfError {
+    code: number;
+    message: string;
+}
+export interface CfDeviceProfile {
+  result: {
+    id: string;
+    split_tunnel?: {
+      mode: 'include' | 'exclude';
+      ips?: string[];
+    };
+  };
+  success: boolean;
+  errors: CfError[];
+  messages: string[];
+}
+export interface SyncPreview {
+  preview: true;
+  addedCount: number;
+  removedCount: number;
+}
+export interface SyncRequest {
+  dryRun: boolean;
 }

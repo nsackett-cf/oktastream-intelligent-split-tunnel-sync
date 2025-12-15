@@ -1,54 +1,87 @@
 import { Hono } from "hono";
 import { Env } from './core-utils';
-import type { ApiResponse, AppConfig, OktaResponse, SyncLog } from '@shared/types';
+import type { ApiResponse, AppConfig, OktaResponse, SyncLog, CfDeviceProfile, SyncRequest, SyncPreview } from '@shared/types';
 const OKTA_IP_RANGES_URL = "https://s3.amazonaws.com/okta-ip-ranges/ip_ranges.json";
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
-    // Proxy to fetch Okta IP ranges, avoiding client-side CORS issues.
     app.get('/api/okta/fetch', async (c) => {
         try {
-            const response = await fetch(OKTA_IP_RANGES_URL, {
-                headers: {
-                    'User-Agent': 'OktaStream-Sync-Worker/1.0'
-                }
-            });
-            if (!response.ok) {
-                throw new Error(`Failed to fetch Okta IP ranges: ${response.statusText}`);
-            }
+            const response = await fetch(OKTA_IP_RANGES_URL, { headers: { 'User-Agent': 'OktaStream-Sync-Worker/1.0' } });
+            if (!response.ok) throw new Error(`Failed to fetch Okta IP ranges: ${response.statusText}`);
             const data: OktaResponse = await response.json();
             return c.json({ success: true, data } satisfies ApiResponse<OktaResponse>);
         } catch (error) {
-            console.error('Error fetching Okta IP ranges:', error);
             const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
             return c.json({ success: false, error: errorMessage }, 500);
         }
     });
-    // Mock endpoints for Phase 1
     app.get('/api/settings', async (c) => {
-        const durableObjectStub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
-        const config = await durableObjectStub.fetch("storage:app_config").then(res => res.json()).catch(() => ({}));
-        return c.json({ success: true, data: config } satisfies ApiResponse<AppConfig>);
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const config = await stub.getAppConfig();
+        return c.json({ success: true, data: config ?? {} } satisfies ApiResponse<Partial<AppConfig>>);
     });
     app.post('/api/settings', async (c) => {
-        const body = await c.req.json() as AppConfig;
-        const durableObjectStub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
-        await durableObjectStub.fetch("storage:app_config", { method: "POST", body: JSON.stringify(body) });
+        const body = await c.req.json<AppConfig>();
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        await stub.saveAppConfig(body);
         return c.json({ success: true, data: body } satisfies ApiResponse<AppConfig>);
     });
-    app.post('/api/sync/simulate', async (c) => {
-        const newLog: SyncLog = {
-            id: crypto.randomUUID(),
-            timestamp: new Date().toISOString(),
-            status: 'simulated',
-            added: Math.floor(Math.random() * 10),
-            removed: Math.floor(Math.random() * 3),
-            details: 'This is a simulated dry-run. No changes were applied.'
-        };
-        return c.json({ success: true, data: newLog } satisfies ApiResponse<SyncLog>);
+    app.get('/api/history', async (c) => {
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const history = await stub.getSyncHistory();
+        return c.json({ success: true, data: history } satisfies ApiResponse<SyncLog[]>);
+    });
+    app.post('/api/sync', async (c) => {
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        try {
+            const { dryRun } = await c.req.json<SyncRequest>();
+            const config = await stub.getAppConfig();
+            if (!config?.cloudflareAccountId || !config.cloudflareApiToken || !config.splitTunnelPolicyId) {
+                return c.json({ success: false, error: 'Configuration is incomplete. Please update settings.' }, 400);
+            }
+            const oktaRes = await fetch(OKTA_IP_RANGES_URL);
+            if (!oktaRes.ok) throw new Error('Failed to fetch Okta IPs');
+            const oktaData: OktaResponse = await oktaRes.json();
+            const oktaSet = new Set(oktaData.ip_ranges.map(r => r.ip_range));
+            const cfUrl = `https://api.cloudflare.com/client/v4/accounts/${config.cloudflareAccountId}/devices/profiles/${config.splitTunnelPolicyId}`;
+            const cfHeaders = { 'Authorization': `Bearer ${config.cloudflareApiToken}`, 'Content-Type': 'application/json' };
+            const cfRes = await fetch(cfUrl, { headers: cfHeaders });
+            const cfData: CfDeviceProfile = await cfRes.json();
+            if (!cfData.success || cfData.errors?.length > 0) {
+                throw new Error(cfData.errors[0]?.message || 'Failed to fetch Cloudflare profile.');
+            }
+            const currentIps = cfData.result.split_tunnel?.ips ?? [];
+            const currentSet = new Set(currentIps);
+            const added = [...oktaSet].filter(ip => !currentSet.has(ip)).length;
+            const removed = [...currentSet].filter(ip => !oktaSet.has(ip)).length;
+            if (dryRun) {
+                const preview: SyncPreview = { preview: true, addedCount: added, removedCount: removed };
+                const log: SyncLog = { id: crypto.randomUUID(), timestamp: new Date().toISOString(), status: 'preview', added, removed, details: 'Dry run preview generated.' };
+                await stub.addSyncLog(log);
+                return c.json({ success: true, data: preview } satisfies ApiResponse<SyncPreview>);
+            }
+            const newIps = [...oktaSet];
+            const patchBody = JSON.stringify({ split_tunnel: { mode: 'include', ips: newIps } });
+            const patchRes = await fetch(cfUrl, { method: 'PATCH', headers: cfHeaders, body: patchBody });
+            if (!patchRes.ok) {
+                const errorText = await patchRes.text();
+                throw new Error(`Cloudflare API Error: ${errorText}`);
+            }
+            const log: SyncLog = { id: crypto.randomUUID(), timestamp: new Date().toISOString(), status: 'success', added, removed, details: 'Policy updated successfully.' };
+            await stub.addSyncLog(log);
+            return c.json({ success: true, data: log } satisfies ApiResponse<SyncLog>);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : 'An unknown error occurred during sync.';
+            const log: SyncLog = { id: crypto.randomUUID(), timestamp: new Date().toISOString(), status: 'failure', added: 0, removed: 0, details: msg };
+            await stub.addSyncLog(log);
+            return c.json({ success: false, error: msg }, 500);
+        }
     });
 }
-// Add storage methods to Durable Object
 declare module './durableObject' {
     interface GlobalDurableObject {
-        handleStorageRequest(request: Request): Promise<Response>;
+        getAppConfig(): Promise<AppConfig | null>;
+        saveAppConfig(cfg: AppConfig): Promise<void>;
+        getSyncHistory(): Promise<SyncLog[]>;
+        addSyncLog(log: SyncLog): Promise<SyncLog[]>;
     }
 }
