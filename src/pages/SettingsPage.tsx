@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -7,10 +7,11 @@ import { getSettings, saveSettings } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Eye, EyeOff, CheckCircle } from 'lucide-react';
+import { motion } from 'framer-motion';
 const settingsSchema = z.object({
   cloudflareAccountId: z.string().min(1, 'Account ID is required'),
   cloudflareApiToken: z.string().min(1, 'API Token is required'),
@@ -19,6 +20,7 @@ const settingsSchema = z.object({
 type SettingsFormValues = z.infer<typeof settingsSchema>;
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const [showPassword, setShowPassword] = useState(false);
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
     queryFn: getSettings,
@@ -66,9 +68,9 @@ export function SettingsPage() {
                 Enter the details for your Cloudflare account to enable synchronization.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-8">
               {isLoading ? (
-                <div className="space-y-6">
+                <div className="space-y-8">
                   <Skeleton className="h-10 w-full" />
                   <Skeleton className="h-10 w-full" />
                   <Skeleton className="h-10 w-full" />
@@ -84,7 +86,7 @@ export function SettingsPage() {
                         <FormControl>
                           <Input placeholder="Your Cloudflare Account ID" {...field} />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="animate-in slide-in-from-bottom-2 duration-200" />
                       </FormItem>
                     )}
                   />
@@ -94,13 +96,19 @@ export function SettingsPage() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Cloudflare API Token</FormLabel>
-                        <FormControl>
-                          <Input type="password" placeholder="••••••••••••••••••••••••" {...field} />
-                        </FormControl>
+                        <div className="relative">
+                          <FormControl>
+                            <Input type={showPassword ? 'text' : 'password'} placeholder="••••••••••••••••••••••••" {...field} />
+                          </FormControl>
+                          <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7" onClick={() => setShowPassword(!showPassword)}>
+                            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            <span className="sr-only">{showPassword ? 'Hide token' : 'Show token'}</span>
+                          </Button>
+                        </div>
                         <FormDescription>
                           This token will be securely handled by the Cloudflare Worker.
                         </FormDescription>
-                        <FormMessage />
+                        <FormMessage className="animate-in slide-in-from-bottom-2 duration-200" />
                       </FormItem>
                     )}
                   />
@@ -113,17 +121,23 @@ export function SettingsPage() {
                         <FormControl>
                           <Input placeholder="The ID of the policy to update" {...field} />
                         </FormControl>
-                        <FormMessage />
+                        <FormMessage className="animate-in slide-in-from-bottom-2 duration-200" />
                       </FormItem>
                     )}
                   />
                 </>
               )}
             </CardContent>
-            <CardFooter className="border-t px-6 py-4">
+            <CardFooter className="border-t px-6 py-4 flex items-center justify-between">
               <Button type="submit" disabled={mutation.isPending || isLoading}>
                 {mutation.isPending ? 'Saving...' : 'Save Configuration'}
               </Button>
+              {mutation.isSuccess && (
+                 <motion.div initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} className="flex items-center text-sm text-green-500">
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    <span>Saved successfully!</span>
+                 </motion.div>
+              )}
             </CardFooter>
           </Card>
         </form>

@@ -19,7 +19,7 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Toaster } from '@/components/ui/sonner';
 const queryClient = new QueryClient();
-const AppRoot = () => (
+export const AppRoot = () => (
   <AppLayout container>
     <ThemeToggle className="absolute top-4 right-4" />
     <Outlet />

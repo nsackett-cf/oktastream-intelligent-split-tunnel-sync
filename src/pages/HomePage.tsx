@@ -13,6 +13,9 @@ import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { SyncLog, SyncPreview } from '@shared/types';
+import { cn } from '@/lib/utils';
+import { motion } from 'framer-motion';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 const StatusBadge = ({ status }: { status: SyncLog['status'] }) => {
   const variants = {
     success: { variant: 'default', className: 'bg-green-500/10 text-green-500 border-green-500/20', label: 'Success' },
@@ -20,9 +23,8 @@ const StatusBadge = ({ status }: { status: SyncLog['status'] }) => {
     preview: { variant: 'secondary', className: 'bg-blue-500/10 text-blue-400 border-blue-500/20', label: 'Preview' },
   } as const;
   const { variant, className, label } = variants[status];
-  return <Badge variant={variant} className={cn('capitalize', className)}>{label}</Badge>;
+  return <Badge variant={variant} className={cn('capitalize', className || '')}>{label}</Badge>;
 };
-import { cn } from '@/lib/utils';
 export function HomePage() {
   const queryClient = useQueryClient();
   const [preview, setPreview] = useState<SyncPreview | null>(null);
@@ -51,7 +53,9 @@ export function HomePage() {
           setPreview(data);
           setIsModalOpen(true);
         } else if (data) {
-          toast.success('Live Sync Successful', { description: `Policy updated with ${data.added} added and ${data.removed} removed ranges.` });
+          const log = data as SyncLog;
+          toast.success('Live Sync Successful', { description: `Policy updated with ${log.added} added and ${log.removed} removed ranges.` });
+          setIsModalOpen(false);
         }
       } else {
         toast.error('Operation Failed', { description: res.error });
@@ -60,9 +64,6 @@ export function HomePage() {
     onError: (err) => {
       toast.error('Operation Failed', { description: err.message });
     },
-    onSettled: () => {
-      setIsModalOpen(false);
-    }
   });
   const ipCount = oktaData?.data?.ip_ranges?.length ?? 0;
   const lastOktaUpdate = oktaData?.data?.last_updated;
@@ -107,7 +108,7 @@ export function HomePage() {
             <CardContent>
               <Button size="lg" onClick={() => syncMutation.mutate(true)} disabled={syncMutation.isPending || isLoading || !!oktaError || !isConfigured}>
                 <Zap className="mr-2 h-4 w-4" />
-                {syncMutation.isPending && syncMutation.variables ? 'Scanning...' : 'Scan & Dry Run'}
+                {syncMutation.isPending && syncMutation.variables === true ? 'Scanning...' : 'Scan & Dry Run'}
               </Button>
             </CardContent>
           </Card>
@@ -138,26 +139,35 @@ export function HomePage() {
       </div>
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Dry Run Preview</DialogTitle>
-            <DialogDescription>Review the changes that will be applied to your Split Tunnel policy. No changes have been made yet.</DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-4 my-4">
-            <div className="p-4 rounded-lg bg-green-500/10 text-center">
-              <p className="text-sm text-green-400/80">IPs to be Added</p>
-              <p className="text-3xl font-bold text-green-400">{preview?.addedCount ?? 0}</p>
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+            <DialogHeader>
+              <DialogTitle>Dry Run Preview</DialogTitle>
+              <DialogDescription>Review the changes that will be applied to your Split Tunnel policy. No changes have been made yet.</DialogDescription>
+            </DialogHeader>
+            <div className="my-6">
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={[{ name: 'Changes', added: preview?.addedCount ?? 0, removed: preview?.removedCount ?? 0 }]} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "hsl(var(--background))",
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: "var(--radius)",
+                    }}
+                  />
+                  <Bar dataKey="added" fill="hsl(142.1 76.2% 41.2%)" name="Added" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="removed" fill="hsl(0 84.2% 60.2%)" name="Removed" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-            <div className="p-4 rounded-lg bg-red-500/10 text-center">
-              <p className="text-sm text-red-400/80">IPs to be Removed</p>
-              <p className="text-3xl font-bold text-red-400">{preview?.removedCount ?? 0}</p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button>
-            <Button onClick={() => syncMutation.mutate(false)} disabled={syncMutation.isPending}>
-              {syncMutation.isPending && !syncMutation.variables ? 'Applying...' : 'Apply Live Sync'}
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+              <Button onClick={() => syncMutation.mutate(false)} disabled={syncMutation.isPending}>
+                {syncMutation.isPending && syncMutation.variables === false ? 'Applying...' : 'Apply Live Sync'}
+              </Button>
+            </DialogFooter>
+          </motion.div>
         </DialogContent>
       </Dialog>
       <footer className="text-center text-sm text-muted-foreground/80 pt-8">
