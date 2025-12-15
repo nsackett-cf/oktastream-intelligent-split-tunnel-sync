@@ -4,7 +4,7 @@ A beautiful, secure, and automated dashboard to synchronize Okta's public IP ran
 
 OktaStream bridges Okta's dynamic infrastructure with Cloudflare Zero Trust. It automates keeping Split Tunnel include/exclude lists synchronized with Okta's frequently updating public IP ranges via a minimalist, high-contrast dashboard. Features include sync health visualization, IP Explorer for browsing CIDR ranges, and secure Cloudflare API credential management.
 
-[cloudflarebutton]
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nsackett-cf/oktastream-intelligent-split-tunnel-sync)
 
 ## Features
 
@@ -132,7 +132,7 @@ Custom domain (optional):
 wrangler deploy --var ASSETS_URL=https://your-pages-domain.pages.dev
 ```
 
-[cloudflarebutton]
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nsackett-cf/oktastream-intelligent-split-tunnel-sync)
 
 ### Production Config
 - Set secrets via Wrangler CLI (above).
