@@ -1,50 +1,54 @@
 import { Hono } from "hono";
 import { Env } from './core-utils';
-import type { DemoItem, ApiResponse } from '@shared/types';
-
+import type { ApiResponse, AppConfig, OktaResponse, SyncLog } from '@shared/types';
+const OKTA_IP_RANGES_URL = "https://s3.amazonaws.com/okta-ip-ranges/ip_ranges.json";
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
-    app.get('/api/test', (c) => c.json({ success: true, data: { name: 'CF Workers Demo' }}));
-
-    // Demo items endpoint using Durable Object storage
-    app.get('/api/demo', async (c) => {
-        const durableObjectStub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
-        const data = await durableObjectStub.getDemoItems();
-        return c.json({ success: true, data } satisfies ApiResponse<DemoItem[]>);
+    // Proxy to fetch Okta IP ranges, avoiding client-side CORS issues.
+    app.get('/api/okta/fetch', async (c) => {
+        try {
+            const response = await fetch(OKTA_IP_RANGES_URL, {
+                headers: {
+                    'User-Agent': 'OktaStream-Sync-Worker/1.0'
+                }
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to fetch Okta IP ranges: ${response.statusText}`);
+            }
+            const data: OktaResponse = await response.json();
+            return c.json({ success: true, data } satisfies ApiResponse<OktaResponse>);
+        } catch (error) {
+            console.error('Error fetching Okta IP ranges:', error);
+            const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+            return c.json({ success: false, error: errorMessage }, 500);
+        }
     });
-
-    // Counter using Durable Object
-    app.get('/api/counter', async (c) => {
+    // Mock endpoints for Phase 1
+    app.get('/api/settings', async (c) => {
         const durableObjectStub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
-        const data = await durableObjectStub.getCounterValue();
-        return c.json({ success: true, data } satisfies ApiResponse<number>);
+        const config = await durableObjectStub.fetch("storage:app_config").then(res => res.json()).catch(() => ({}));
+        return c.json({ success: true, data: config } satisfies ApiResponse<AppConfig>);
     });
-    
-    app.post('/api/counter/increment', async (c) => {
+    app.post('/api/settings', async (c) => {
+        const body = await c.req.json() as AppConfig;
         const durableObjectStub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
-        const data = await durableObjectStub.increment();
-        return c.json({ success: true, data } satisfies ApiResponse<number>);
+        await durableObjectStub.fetch("storage:app_config", { method: "POST", body: JSON.stringify(body) });
+        return c.json({ success: true, data: body } satisfies ApiResponse<AppConfig>);
     });
-
-    // Demo item management endpoints
-    app.post('/api/demo', async (c) => {
-        const body = await c.req.json() as DemoItem;
-        const durableObjectStub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
-        const data = await durableObjectStub.addDemoItem(body);
-        return c.json({ success: true, data } satisfies ApiResponse<DemoItem[]>);
+    app.post('/api/sync/simulate', async (c) => {
+        const newLog: SyncLog = {
+            id: crypto.randomUUID(),
+            timestamp: new Date().toISOString(),
+            status: 'simulated',
+            added: Math.floor(Math.random() * 10),
+            removed: Math.floor(Math.random() * 3),
+            details: 'This is a simulated dry-run. No changes were applied.'
+        };
+        return c.json({ success: true, data: newLog } satisfies ApiResponse<SyncLog>);
     });
-
-    app.put('/api/demo/:id', async (c) => {
-        const id = c.req.param('id');
-        const body = await c.req.json() as Partial<Omit<DemoItem, 'id'>>;
-        const durableObjectStub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
-        const data = await durableObjectStub.updateDemoItem(id, body);
-        return c.json({ success: true, data } satisfies ApiResponse<DemoItem[]>);
-    });
-
-    app.delete('/api/demo/:id', async (c) => {
-        const id = c.req.param('id');
-        const durableObjectStub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
-        const data = await durableObjectStub.deleteDemoItem(id);
-        return c.json({ success: true, data } satisfies ApiResponse<DemoItem[]>);
-    });
+}
+// Add storage methods to Durable Object
+declare module './durableObject' {
+    interface GlobalDurableObject {
+        handleStorageRequest(request: Request): Promise<Response>;
+    }
 }
